@@ -1,5 +1,7 @@
 import os
 import argparse
+from typing import Tuple
+
 import pandas as pd
 from os.path import join
 from tqdm import tqdm
@@ -8,7 +10,9 @@ import json
 from mapper_raw_file import MAPPING_FILE_NAME
 
 
-def read_amazon(path_a, path_b):
+def read_amazon(path_a: list,
+                path_b: list,
+                ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     df_a = pd.read_csv(path_a, sep=',', header=None, names=['user', 'item', 'rating', 'ts']).drop(columns=['rating'])
     df_b = pd.read_csv(path_b, sep=',', header=None, names=['user', 'item', 'rating', 'ts']).drop(columns=['rating'])
 
@@ -21,7 +25,9 @@ def read_amazon(path_a, path_b):
     return df_a, df_b
 
 
-def retain_overlap_user(df_a, df_b):
+def retain_overlap_user(df_a: pd.DataFrame,
+                        df_b: pd.DataFrame,
+                        ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """ filter out non-overlapped user from both domains """
     print(f'\n[info] Retaining users have interactions on both domains only...')
 
@@ -42,7 +48,9 @@ def retain_overlap_user(df_a, df_b):
     return df, df_a, df_b
 
 
-def filter_cold_item(df, k_i):
+def filter_cold_item(df: pd.DataFrame,
+                     k_i: int,
+                     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     filter out items with less than k_i interactions
     """
@@ -61,7 +69,10 @@ def filter_cold_item(df, k_i):
     return df, df_a, df_b
 
 
-def filter_mono_domain_user(df, len_max, k_u):
+def filter_mono_domain_user(df: pd.DataFrame,
+                            len_max: int,
+                            k_u: int,
+                            ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list]:
     """
     trim sequences exceeding the maximum interaction length len_max
     filter out users with less than k_u interactions per domain
@@ -88,7 +99,11 @@ def filter_mono_domain_user(df, len_max, k_u):
     return df, df_a, df_b, list_u
 
 
-def reindex(df, df_a, df_b, list_u):
+def reindex(df: pd.DataFrame,
+            df_a: pd.DataFrame,
+            df_b: pd.DataFrame,
+            list_u: list,
+            ) -> Tuple[pd.DataFrame, dict, dict]:
     """ filter out users with less than k interactions per domain """
     print(f'\n[info] Reindexing users and items ...')
 
@@ -113,7 +128,13 @@ def reindex(df, df_a, df_b, list_u):
     return df, map_u, map_i
 
 
-def save(df, len_max, path, f_name, map_u, map_i):
+def save(df: pd.DataFrame,
+         len_max: int,
+         path: str,
+         f_name: str,
+         map_u: dict,
+         map_i: dict,
+         ) -> None:
     """ filter out users/items with less than k interactions """
     print(f'\n[info] Saving files to {path} ...')
 
@@ -132,7 +153,7 @@ def save(df, len_max, path, f_name, map_u, map_i):
     print(f'\t   Done.')
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description='CDSR Leave-One-Out Preprocess Script')
 
     # Training
@@ -142,7 +163,7 @@ def main():
     parser.add_argument('--len_max', type=int, default=50, help='length threshold for each sequence')
     args = parser.parse_args()
 
-    (path_a, path_b) = MAPPING_FILE_NAME_AMAZON[args.data]
+    (path_a, path_b) = MAPPING_FILE_NAME[args.data]
     path_a = f'./raw/{path_a}'
     path_b = f'./raw/{path_b}'
     path_processed = f'./{args.data}/'
@@ -150,7 +171,7 @@ def main():
     if not os.path.exists(path_processed):
         os.makedirs(path_processed)
 
-    if args.data in MAPPING_FILE_NAME_AMAZON.keys():
+    if args.data in MAPPING_FILE_NAME.keys():
         print(f'\n[info] Start preprocessing "{args.data}" dataset...')
         df_a, df_b = read_amazon(path_a, path_b)
     else:

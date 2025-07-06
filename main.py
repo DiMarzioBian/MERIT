@@ -9,7 +9,7 @@ from noter import Noter
 from trainer import Trainer
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description='MERIT-Experiment')
     parser.add_argument('--name', type=str, default='MERIT (MM\'25)', help='name of the models')
     parser.add_argument('--ver', type=str, default='0', help='development notes')
