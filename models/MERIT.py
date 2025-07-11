@@ -94,13 +94,13 @@ class MERIT(torch.nn.Module):
         h_b = self.sa_b(h_b, mask_b)
 
         # ----------------------------------
-        # moe-ffn
+        # moffn
         h_m, h_m2a, h_m2b = self.ffn_m(h_m, mask_m)
         h_a, h_a2m, h_a2b = self.ffn_a(h_a, mask_a)
         h_b, h_b2m, h_b2a = self.ffn_b(h_b, mask_b)
 
         # ----------------------------------
-        # cross-attn fusion of A and B
+        # extended cross-attn fusion of A and B
         h_a = self.caf_a(h_a, h_m2a, h_b2a, mask_a)
         h_b = self.caf_b(h_b, h_m2b, h_a2b, mask_b)
 
@@ -110,6 +110,7 @@ class MERIT(torch.nn.Module):
         # ----------------------------------
         # cross-attn fusion for M
         h_m = self.caf_m(h_m, h_a2m + h_b2m, mask_m)
+
         h_m = self.ffn_caf_m(h_m, mask_m)
 
         # ----------------------------------
