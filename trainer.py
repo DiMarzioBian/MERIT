@@ -44,15 +44,15 @@ class Trainer(object):
         t0 = time.time()
 
         # training
-        # self.noter.log_msg(f'\n[epoch {i_epoch:>2}]')
-        # for batch in tqdm(self.trainloader, desc='training', leave=False):
-        #     loss_f_batch, loss_m_batch = self.train_batch(batch)
-        #
-        #     n_seq = batch[0].size(0)
-        #     loss_f += (loss_f_batch * n_seq)
-        #     loss_m += (loss_m_batch * n_seq)
-        #
-        # self.noter.log_train(loss_f / self.n_user, loss_m / self.n_user, time.time() - t0)
+        self.noter.log_msg(f'\n[epoch {i_epoch:>2}]')
+        for batch in tqdm(self.trainloader, desc='training', leave=False):
+            loss_f_batch, loss_m_batch = self.train_batch(batch)
+
+            n_seq = batch[0].size(0)
+            loss_f += (loss_f_batch * n_seq)
+            loss_m += (loss_m_batch * n_seq)
+
+        self.noter.log_train(loss_f / self.n_user, loss_m / self.n_user, time.time() - t0)
 
         # validating
         self.model.eval()
