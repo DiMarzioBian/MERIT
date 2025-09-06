@@ -1,5 +1,4 @@
-from typing import Tuple
-import argparse
+from argparse import Namespace
 import time
 from tqdm import tqdm
 
@@ -16,19 +15,22 @@ from noter import Noter
 
 class Trainer(object):
     def __init__(self,
-                 args: argparse,
-                 noter: Noter):
+                 args: Namespace,
+                 noter: Noter
+                 )-> None:
         print('[info] Loading data')
-        self.trainloader, self.valloader, self.testloader = get_dataloader(args)
-        self.n_user, self.n_item_a, self.n_item_b, self.n_item = args.n_user, args.n_item_a, args.n_item_b, args.n_item
+        self.n_warmup = args.n_warmup
+        self.train_loader, self.val_loader, self.test_loader = get_dataloader(args)
+        self.n_user = args.n_user
+        self.n_item_a = args.n_item_a
         print('Done.\n')
 
         self.noter = noter
         self.device = args.device
-        self.n_mtc = args.n_mtc
 
         # models
         self.model = MERIT(args).to(args.device)
+
         self.optimizer = AdamW(self.model.parameters(), lr=args.lr, weight_decay=args.l2)
         self.scheduler_warmup = LinearLR(self.optimizer, start_factor=1e-5, end_factor=1., total_iters=args.n_warmup)
         self.scheduler = ReduceLROnPlateau(self.optimizer, mode='max', factor=args.lr_g, patience=args.lr_p)
@@ -37,68 +39,73 @@ class Trainer(object):
 
     def run_epoch(self,
                   i_epoch: int,
-                  ) -> Tuple[list, list]:
+                  ) -> tuple[list | None, list | None]:
         self.model.train()
-        self.optimizer.zero_grad()
-        loss_f, loss_m = 0., 0.
-        t0 = time.time()
+        loss_a, loss_b, loss_m = 0., 0., 0.
+        t_0 = time.time()
 
         # training
-        self.noter.log_msg(f'\n[epoch {i_epoch:>2}]')
-        for batch in tqdm(self.trainloader, desc='training', leave=False):
-            loss_f_batch, loss_m_batch = self.train_batch(batch)
+        for batch in tqdm(self.train_loader, desc='training', leave=False):
+            self.optimizer.zero_grad()
+
+            loss_a_batch, loss_b_batch, loss_m_batch = self.train_batch(batch)
 
             n_seq = batch[0].size(0)
-            loss_f += (loss_f_batch * n_seq)
-            loss_m += (loss_m_batch * n_seq)
+            loss_a += (loss_a_batch * n_seq) / self.n_user
+            loss_b += (loss_b_batch * n_seq) / self.n_user
+            loss_m += (loss_m_batch * n_seq) / self.n_user
 
-        self.noter.log_train(loss_f / self.n_user, loss_m / self.n_user, time.time() - t0)
+        self.noter.log_train(i_epoch, loss_a, loss_b, loss_m, time.time() - t_0)
+
+        # warm-up quit
+        if i_epoch <= self.n_warmup:
+            return None, None
 
         # validating
         self.model.eval()
-        res_ranks = [[] for _ in range(2)]
+        ranks_f2a, ranks_f2b = [], []
+
         with torch.no_grad():
-            for batch in tqdm(self.valloader, desc='validating', leave=False):
-                res_batch = self.evaluate_batch(batch)
+            for batch in tqdm(self.val_loader, desc='validating', leave=False):
+                ranks_batch = self.evaluate_batch(batch)
 
-                res_ranks = [res_set + list(res) for res_set, res in zip(res_ranks, res_batch)]
+                ranks_f2a += ranks_batch[0]
+                ranks_f2b += ranks_batch[1]
 
-        return cal_metrics(res_ranks[0]), cal_metrics(res_ranks[1])
+        return cal_metrics(ranks_f2a), cal_metrics(ranks_f2b)
 
     def run_test(self,
-                 ) -> list:
+                 ) -> tuple[list, list]:
         self.model.eval()
-
-        res_ranks = [[] for _ in range(2)]
+        ranks_f2a, ranks_f2b = [], []
 
         with torch.no_grad():
-            for batch in tqdm(self.testloader, desc='testing', leave=False):
-                res_batch = self.evaluate_batch(batch)
+            for batch in tqdm(self.test_loader, desc='testing', leave=False):
+                ranks_batch = self.evaluate_batch(batch)
 
-                res_ranks = [res_set + res for res_set, res in zip(res_ranks, res_batch)]
+                ranks_f2a += ranks_batch[0]
+                ranks_f2b += ranks_batch[1]
 
-        res_rank = [cal_metrics(ranks) for ranks in res_ranks]
-
-        return res_rank
+        return cal_metrics(ranks_f2a), cal_metrics(ranks_f2b)
 
     def train_batch(self,
-                    batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-                    ) -> Tuple[float, float]:
+                    batch: list[torch.Tensor],
+                    ) -> tuple[float, float, float]:
         seq_m, gt_m, gt_ab, gt_neg_m, gt_neg_ab = map(lambda x: x.to(self.device), batch)
 
         h_m, h_a, h_b = self.model(seq_m)
 
-        loss_f = self.model.cal_rec_loss(h_a + h_b + h_m.detach(), gt_ab, gt_neg_ab)
-        loss_m =  self.model.cal_rec_loss(h_m, gt_m, gt_neg_m)
+        loss_a, loss_b = self.model.cal_rec_loss(h_a + h_b + h_m.detach(), gt_ab, gt_neg_ab)
+        loss_m =  self.model.cal_rec_loss(h_m, gt_m, gt_neg_m, m_domain=True)
 
-        (loss_f + loss_m).backward()
+        (loss_a + loss_b + loss_m).backward()
 
         self.optimizer.step()
-        return loss_f.item(), loss_m.item()
+        return loss_a.item(), loss_b.item(), loss_m.item()
 
     def evaluate_batch(self,
-                       batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
-                       ) -> Tuple[list, list]:
+                       batch: list[torch.Tensor],
+                       ) -> tuple[list[float], list[float]]:
         seq_m, idx_last_a, idx_last_b, gt, gt_mtc = map(lambda x: x.to(self.device), batch)
 
         hs = self.model(seq_m, idx_last_a, idx_last_b)

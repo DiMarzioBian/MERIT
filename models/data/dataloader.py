@@ -1,25 +1,25 @@
 from os.path import join
-from typing import Tuple
-import argparse
-import numpy as np
+from argparse import Namespace
 import pickle
 import json
 from tqdm import tqdm
+import numpy as np
+from numpy.typing import NDArray
 
 import torch
 from torch.utils.data import Dataset, DataLoader
 
 
-def trim_seq(seq: np.array,
-             len_trim: np.array,
-             ) -> np.array:
+def trim_seq(seq: NDArray[np.int32],
+             len_trim: int,
+             ) -> NDArray[np.int32]:
     """ pad sequences to required length """
     return np.concatenate((np.zeros(max(0, len_trim - len(seq)), dtype=np.int32), seq))[-len_trim:]
 
 
-def get_last_idx(seq: np.array,
-                 len_trim: np.array,
-                 ) -> np.array:
+def get_last_idx(seq: NDArray[np.int32],
+                 len_trim: int,
+                 ) -> NDArray[np.int32]:
     """ make ground truths for domain-specific sequences """
     i = 0
     for i in range(-1, -min(len_trim, len(seq)) - 1, -1):
@@ -28,10 +28,10 @@ def get_last_idx(seq: np.array,
     return np.array([i])
 
 
-def get_gt_spe(seq: np.array,
-               seq_raw: np.array,
+def get_gt_spe(seq: NDArray[np.int32],
+               seq_raw: NDArray[np.int32],
                n_item_a: int,
-               ) -> np.array:
+               ) -> NDArray[np.int32]:
     """ make domain-specific ground truths """
     seq_a = np.where(seq <= n_item_a, seq, 0)
     seq_b = np.where(seq > n_item_a, seq, 0)
@@ -46,32 +46,34 @@ def get_gt_spe(seq: np.array,
             gt_ab = np.append(gt_ab, gt_raw_a[0])
             gt_raw_a = gt_raw_a[1:]
 
-        elif i_b > 0:
+        else:
+            # assert i_b > 0
             gt_ab = np.append(gt_ab, gt_raw_b[0])
             gt_raw_b = gt_raw_b[1:]
-
-        else:
-            return AssertionError
 
     return gt_ab
 
 
-def process_train(seq_raw: np.array,
+def process_train(seq_raw: NDArray[np.int32],
                   n_item_a: int,
                   len_trim: int,
-                  ) -> Tuple[np.array, np.array, np.array, list]:
+                  ) -> tuple[NDArray[np.int32], ...]:
     """ process training sequences """
     seq, gt_m = seq_raw[:-1], seq_raw[1:]
 
     gt_ab = get_gt_spe(seq, seq_raw, n_item_a)
 
-    return *(trim_seq(x, len_trim) for x in (seq, gt_m, gt_ab)), seq_raw
+    seq = trim_seq(seq, len_trim)
+    gt_m = trim_seq(gt_m, len_trim)
+    gt_ab = trim_seq(gt_ab, len_trim)
+
+    return seq, gt_m, gt_ab, seq_raw
 
 
-def process_evaluate(seq_raw: np.array,
+def process_evaluate(seq_raw: NDArray[np.int32],
                      n_item_a: int,
                      len_trim: int,
-                     ) -> Tuple[np.array, np.array, np.array, np.array, np.array, list]:
+                     ) -> tuple[NDArray[np.int32], ...]:
     """ process evaluation sequences """
     seq, gt = seq_raw[:-1], seq_raw[-1:]
 
@@ -79,11 +81,13 @@ def process_evaluate(seq_raw: np.array,
 
     idx_last_b = get_last_idx(np.where(seq > n_item_a, seq, 0), len_trim)
 
-    return trim_seq(seq, len_trim), idx_last_a, idx_last_b, gt, seq_raw
+    seq = trim_seq(seq, len_trim)
+
+    return seq, idx_last_a, idx_last_b, gt, seq_raw
 
 
-def get_dataset(args: argparse,
-                ) -> Tuple[Dataset, Dataset, Dataset]:
+def get_dataset(args: Namespace,
+                ) -> tuple[Dataset, Dataset, Dataset]:
     """ get datasets """
     if args.raw:
         print('Reading raw data...')
@@ -91,7 +95,7 @@ def get_dataset(args: argparse,
             map_i = json.load(f)
             list_dm = np.array(list(map_i.values()))[:, 1]
             args.n_item_a = n_item_a = np.sum(list_dm == 0)
-            args.n_item_b = n_item_b = np.sum(list_dm == 1)
+            args.n_item_b = np.sum(list_dm == 1)
 
         data_seq = []
         with open(join(args.path_data, args.f_raw), 'r', encoding='utf-8') as f:
@@ -101,7 +105,7 @@ def get_dataset(args: argparse,
                 for ui in line[1:][-args.len_max:]:
                     seq.append(int(ui.split('|')[0]))
 
-                data_seq.append(np.array(seq))
+                data_seq.append(np.asarray(seq))
 
         print('Serializing data...')
         data_tr = []
@@ -134,7 +138,7 @@ class TrainDataset(Dataset):
     """ training dataset """
 
     def __init__(self,
-                 args: argparse,
+                 args: Namespace,
                  data: list[list],
                  ) -> None:
         self.len_trim = args.len_trim
@@ -149,11 +153,11 @@ class TrainDataset(Dataset):
         self.idx_all_b = np.arange(args.n_item_a, args.n_item + 1)
 
     def get_m_neg(self,
-                  gt: np.array,
-                  cand_a: np.array,
-                  cand_b: np.array,
-                  ) -> np.array:
-        gt_neg = np.zeros((self.len_trim, self.n_neg_x2))
+                  gt: NDArray[np.int32],
+                  cand_a: NDArray[np.int32],
+                  cand_b: NDArray[np.int32],
+                  ) -> NDArray[np.int32]:
+        gt_neg = np.zeros((self.len_trim, self.n_neg_x2), dtype=np.int32)
 
         for i, x in enumerate(gt):
             if x != 0:
@@ -163,11 +167,11 @@ class TrainDataset(Dataset):
         return gt_neg
 
     def get_ab_neg(self,
-                   gt: np.array,
-                   cand_a: np.array,
-                   cand_b: np.array,
-                   ) -> np.array:
-        gt_neg = np.zeros((self.len_trim, self.n_neg))
+                   gt: NDArray[np.int32],
+                   cand_a: NDArray[np.int32],
+                   cand_b: NDArray[np.int32],
+                   ) -> NDArray[np.int32]:
+        gt_neg = np.zeros((self.len_trim, self.n_neg), dtype=np.int32)
 
         for i, x in enumerate(gt):
             if 0 < x <= self.n_item_a:
@@ -183,7 +187,7 @@ class TrainDataset(Dataset):
 
     def __getitem__(self,
                     index: int,
-                    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                    ) -> tuple[torch.LongTensor, ...]:
         seq_m, gt_m, gt_ab, seq_raw = self.data[index]
 
         cand_a = self.idx_all_a[~np.isin(self.idx_all_a, seq_raw[seq_raw <= self.n_item_a], assume_unique=True)]
@@ -199,7 +203,7 @@ class EvalDataset(Dataset):
     """ evaluation dataset """
 
     def __init__(self,
-                 args: argparse,
+                 args: Namespace,
                  data: list[list],
                  ) -> None:
         self.len_trim = args.len_trim
@@ -214,9 +218,9 @@ class EvalDataset(Dataset):
         self.idx_all_b = np.arange(args.n_item_a, args.n_item + 1)
 
     def get_mtc(self,
-                gt: np.array,
+                gt: NDArray[np.int32],
                 seq_raw: list,
-                ) -> np.array:
+                ) -> NDArray[np.int32]:
         if gt <= self.n_item_a:
             gt_mtc = np.random.default_rng().choice(
                 self.idx_all_a[~np.isin(self.idx_all_a, seq_raw[seq_raw <= self.n_item_a], assume_unique=True)],
@@ -234,7 +238,7 @@ class EvalDataset(Dataset):
 
     def __getitem__(self,
                     index: int,
-                    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                    ) -> tuple[torch.LongTensor, ...]:
         seq_m, idx_last_a, idx_last_b, gt, seq_raw = self.data[index]
 
         gt_mtc = self.get_mtc(gt, seq_raw)
@@ -242,10 +246,10 @@ class EvalDataset(Dataset):
         return tuple(map(lambda x: torch.LongTensor(x), (seq_m, idx_last_a, idx_last_b, gt, gt_mtc)))
 
 
-def get_dataloader(args: argparse,
-                   ) -> Tuple[DataLoader, DataLoader, DataLoader]:
+def get_dataloader(args: Namespace,
+                   ) -> tuple[DataLoader, DataLoader, DataLoader]:
     train_set, valid_set, test_set = get_dataset(args)
-    trainloader = DataLoader(train_set, batch_size=args.bs, shuffle=True, num_workers=args.n_worker, pin_memory=True)
-    valloader = DataLoader(valid_set, batch_size=args.bse, shuffle=False, num_workers=args.n_worker, pin_memory=True)
-    testloader = DataLoader(test_set, batch_size=args.bse, shuffle=False, num_workers=args.n_worker, pin_memory=True)
-    return trainloader, valloader, testloader
+    train_loader = DataLoader(train_set, batch_size=args.bs, shuffle=True, num_workers=args.n_worker, pin_memory=True)
+    val_loader = DataLoader(valid_set, batch_size=args.bse, shuffle=False, num_workers=args.n_worker, pin_memory=True)
+    test_loader = DataLoader(test_set, batch_size=args.bse, shuffle=False, num_workers=args.n_worker, pin_memory=True)
+    return train_loader, val_loader, test_loader

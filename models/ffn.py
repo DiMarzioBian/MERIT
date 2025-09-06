@@ -1,5 +1,3 @@
-from typing import Tuple
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +9,10 @@ class Gate(nn.Module):
                  n_expert: int,
                  ) -> None:
         super().__init__()
-        self.fc = nn.Linear(d_input, n_expert, bias=False)
+        self.d_input = d_input
+        self.n_expert = n_expert
+
+        self.fc = nn.Linear(self.d_input, self.n_expert, bias=False)
 
     def forward(self,
                 h: torch.Tensor,
@@ -29,9 +30,10 @@ class MLP(nn.Module):
         super().__init__()
         self.d_embed = d_embed
         self.d_ffn = d_ffn
-        self.fc_1 = nn.Linear(d_embed, self.d_ffn, bias=False)
-        self.fc_2 = nn.Linear(d_embed, self.d_ffn, bias=False)
-        self.fc_3 = nn.Linear(self.d_ffn, d_embed, bias=False)
+
+        self.fc_1 = nn.Linear(self.d_embed, self.d_ffn, bias=False)
+        self.fc_2 = nn.Linear(self.d_embed, self.d_ffn, bias=False)
+        self.fc_3 = nn.Linear(self.d_ffn, self.d_embed, bias=False)
 
     def forward(self,
                 h: torch.Tensor,
@@ -88,7 +90,7 @@ class MoFFN(nn.Module):
     def forward(self,
                 h: torch.Tensor,
                 mask: torch.Tensor,
-                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         h_s = self.expert_s(h).unsqueeze(-2)
         h_1 = self.expert_1(h).unsqueeze(-2)
         h_2 = self.expert_2(h).unsqueeze(-2)
