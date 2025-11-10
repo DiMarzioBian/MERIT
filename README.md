@@ -2,10 +2,14 @@
 
 This is the ***official*** Pytorch implementation of paper "Multi-Domain Enhancement via Residual Interwoven Transfer in Cross-Domain Sequential Recommendation" accepted by ACM Multimedia 2025.
 
-## 1. Data
-In argument '--data', 'afk' refers to Amazon Food-Kitchen dataset, 'amb' refers to Amazon Movie-Book dataset, and 'abe' refers to Amazon Beauty-Electronics dataset.
+**NOTICE**: we largely refractor the code to improve speed, training stability, and code readability. Hence, the tuned hyperparameter provided in `demo.sh` may no longer be optimal.
 
-Processed data are stored in /data/. If you wanna process your own data, please put the data under /data/raw/, and check the preprocess scripts /utils/preprocess.py.
+If you encounter performance issues, please submit an issue as soon as possible, as I currently do not have enough time to fully test the new code.
+
+## 1. Data
+In argument `--data`, `afk` refers to Amazon Food-Kitchen dataset, `amb` refers to Amazon Movie-Book dataset, and `abe` refers to Amazon Beauty-Electronics dataset.
+
+Processed data are stored in `/data/`. If you wanna process your own data, please put the data under /data/raw/, and check the preprocess scripts `/utils/preprocess.py`.
 
 ## 2. Usage
 Please check demo.sh on running on different datasets.

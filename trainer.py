@@ -96,7 +96,8 @@ class Trainer(object):
         h_m, h_a, h_b = self.model(seq_m)
 
         loss_a, loss_b = self.model.cal_rec_loss(h_a + h_b + h_m.detach(), gt_ab, gt_neg_ab)
-        loss_m =  self.model.cal_rec_loss(h_m, gt_m, gt_neg_m, m_domain=True)
+        loss_ma, loss_mb =  self.model.cal_rec_loss(h_m, gt_m, gt_neg_m)
+        loss_m = loss_ma + loss_mb
 
         (loss_a + loss_b + loss_m).backward()
 
@@ -108,6 +109,10 @@ class Trainer(object):
                        ) -> tuple[list[float], list[float]]:
         seq_m, idx_last_a, idx_last_b, gt, gt_mtc = map(lambda x: x.to(self.device), batch)
 
-        hs = self.model(seq_m, idx_last_a, idx_last_b)
+        h_m, h_a, h_b = self.model(seq_m, idx_last_a, idx_last_b)
 
-        return self.model.cal_rank(hs, gt, gt_mtc)
+        ranks, mask_gt_a, mask_gt_b = self.model.cal_rank(h_m, h_a, h_b, gt, gt_mtc)
+        ranks_a = ranks[mask_gt_a.squeeze(-1) == 1].tolist()
+        ranks_b = ranks[mask_gt_b.squeeze(-1) == 1].tolist()
+
+        return ranks_a, ranks_b

@@ -10,6 +10,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 
+rng = np.random.default_rng()
+
+
 def trim_seq(seq: NDArray[np.int32],
              len_trim: int,
              ) -> NDArray[np.int32]:
@@ -161,8 +164,8 @@ class TrainDataset(Dataset):
 
         for i, x in enumerate(gt):
             if x != 0:
-                gt_neg[i] = np.concatenate((np.random.default_rng().choice(cand_a, size=self.n_neg, replace=False),
-                                            np.random.default_rng().choice(cand_b, size=self.n_neg, replace=False)))
+                gt_neg[i] = np.concatenate((rng.choice(cand_a, size=self.n_neg, replace=False),
+                                            rng.choice(cand_b, size=self.n_neg, replace=False)))
 
         return gt_neg
 
@@ -175,10 +178,10 @@ class TrainDataset(Dataset):
 
         for i, x in enumerate(gt):
             if 0 < x <= self.n_item_a:
-                gt_neg[i] = np.random.default_rng().choice(cand_a, size=self.n_neg, replace=False)
+                gt_neg[i] = rng.choice(cand_a, size=self.n_neg, replace=False)
 
             elif x > self.n_item_a:
-                gt_neg[i] = np.random.default_rng().choice(cand_b, size=self.n_neg, replace=False)
+                gt_neg[i] = rng.choice(cand_b, size=self.n_neg, replace=False)
 
         return gt_neg
 
@@ -222,12 +225,12 @@ class EvalDataset(Dataset):
                 seq_raw: list,
                 ) -> NDArray[np.int32]:
         if gt <= self.n_item_a:
-            gt_mtc = np.random.default_rng().choice(
+            gt_mtc = rng.choice(
                 self.idx_all_a[~np.isin(self.idx_all_a, seq_raw[seq_raw <= self.n_item_a], assume_unique=True)],
                 size=self.n_mtc, replace=False)
 
         else:
-            gt_mtc = np.random.default_rng().choice(
+            gt_mtc = rng.choice(
                 self.idx_all_b[~np.isin(self.idx_all_b, seq_raw[seq_raw > self.n_item_a], assume_unique=True)],
                 size=self.n_mtc, replace=False)
 
@@ -248,6 +251,9 @@ class EvalDataset(Dataset):
 
 def get_dataloader(args: Namespace,
                    ) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """
+    Return loaders for training, evaluation and testing.
+    """
     train_set, valid_set, test_set = get_dataset(args)
     train_loader = DataLoader(train_set, batch_size=args.bs, shuffle=True, num_workers=args.n_worker, pin_memory=True)
     val_loader = DataLoader(valid_set, batch_size=args.bse, shuffle=False, num_workers=args.n_worker, pin_memory=True)

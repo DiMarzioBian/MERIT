@@ -55,6 +55,11 @@ class MERIT(torch.nn.Module):
 
         self.apply(init_weights)
 
+    def embed_pos(self,
+                  mask: torch.Tensor,
+                  ) -> torch.Tensor:
+        return self.ep(get_absolute_pos_idx(mask))
+
     def forward(self,
                 seq_m: torch.Tensor,
                 idx_last_a: torch.Tensor=None,
@@ -62,22 +67,14 @@ class MERIT(torch.nn.Module):
                 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
         # embedding
-        mask_m = (seq_m != 0).half()
-        mask_a = (seq_m > self.n_item_a).half()
-        mask_b = ((seq_m > 0) & (seq_m <= self.n_item_a)).half()
+        mask_m = (seq_m != 0).to(torch.int32).unsqueeze(-1)
+        mask_a = (seq_m > self.n_item_a).to(torch.int32).unsqueeze(-1)
+        mask_b = ((seq_m > 0) & (seq_m <= self.n_item_a)).to(torch.int32).unsqueeze(-1)
 
         h_m = self.ei(seq_m)
-        h_a = h_m + self.ep(get_absolute_pos_idx(mask_m))
-        h_b = h_m + self.ep(get_absolute_pos_idx(mask_a))
-        h_m = h_m + self.ep(get_absolute_pos_idx(mask_b))
-
-        mask_m.unsqueeze_(-1)
-        mask_a.unsqueeze_(-1)
-        mask_b.unsqueeze_(-1)
-
-        h_m = self.dropout(h_m) * mask_m
-        h_a = self.dropout(h_a) * mask_a
-        h_b = self.dropout(h_b) * mask_b
+        h_a = self.dropout(h_m + self.embed_pos(mask_m)) * mask_m
+        h_b = self.dropout(h_m + self.embed_pos(mask_m)) * mask_a
+        h_m = self.dropout(h_m + self.embed_pos(mask_b)) * mask_b
 
         # multi-head self-attention
         h_m = self.sa_m(h_m, mask_m)
@@ -91,14 +88,13 @@ class MERIT(torch.nn.Module):
 
         # CAF_m
         h_m = self.caf_m(h_m, h_a2m + h_b2m, mask_m)
-
         h_m = self.ffn_caf_m(h_m, mask_m)
 
         # ECAF_a and ECAF_b
         h_a = self.caf_a(h_a, h_m2a, h_b2a, mask_a)
-        h_b = self.caf_b(h_b, h_m2b, h_a2b, mask_b)
-
         h_a = self.ffn_caf_a(h_a, mask_a)
+
+        h_b = self.caf_b(h_b, h_m2b, h_a2b, mask_b)
         h_b = self.ffn_caf_b(h_b, mask_b)
 
         # output
@@ -114,67 +110,39 @@ class MERIT(torch.nn.Module):
                      h: torch.Tensor,
                      gt: torch.Tensor,
                      gt_neg: torch.Tensor,
-                     mask: torch.Tensor = None,
-                     m_domain: bool = False,
-                     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """ InfoNCE """
-        e_gt = self.ei(gt)
-        e_neg = self.ei(gt_neg)
-
-        logits = torch.cat(((h * e_gt).unsqueeze(-2).sum(-1),
-                            (h.unsqueeze(-2) * e_neg).sum(-1)), dim=-1).div(self.temp)
-
+                     ) -> tuple[torch.Tensor, torch.Tensor]:
         mask_gt_a = torch.where(gt.gt(0) & gt.le(self.n_item_a), 1, 0)
         mask_gt_b = torch.where(gt.gt(self.n_item_a), 1, 0)
 
-        if mask is not None:
-            mask = mask.squeeze(-1)
-            mask_gt_a *= mask
-            mask_gt_b *= mask
+        e_gt = self.ei(gt).unsqueeze(-2)
+        e_neg = self.ei(gt_neg)
+        e_all = torch.cat([e_gt, e_neg], dim=-2)
+
+        logits = torch.einsum('bld,blnd->bln', h, e_all).div(self.temp)
 
         loss = -F.log_softmax(logits, dim=2)[:, :, 0]
 
-        if m_domain:
-            loss_a = (loss * cal_norm_mask(mask_gt_a)).sum(-1).mean()
-            loss_b = (loss * cal_norm_mask(mask_gt_b)).sum(-1).mean()
-            return loss_a + loss_b
+        loss_a = (loss * cal_norm_mask(mask_gt_a)).sum(-1).mean()
+        loss_b = (loss * cal_norm_mask(mask_gt_b)).sum(-1).mean()
 
-        else:
-            loss_a = (loss * cal_norm_mask(mask_gt_a)).sum(-1).mean()
-            loss_b = (loss * cal_norm_mask(mask_gt_b)).sum(-1).mean()
-            return loss_a, loss_b
-
-    @staticmethod
-    def cal_domain_rank(h: torch.Tensor,
-                        e_gt: torch.Tensor,
-                        e_mtc: torch.Tensor,
-                        mask_gt_a: torch.Tensor,
-                        mask_gt_b: torch.Tensor,
-                        ) -> tuple[list, list]:
-        """ calculate domain rank via inner-product similarity """
-        logit_gt = (h * e_gt.squeeze(1)).sum(-1, keepdims=True)
-        logit_mtc = (h.unsqueeze(1) * e_mtc).sum(-1)
-
-        ranks = (logit_mtc - logit_gt).gt(0).sum(-1).add(1)
-        ranks_a = ranks[mask_gt_a == 1].tolist()
-        ranks_b = ranks[mask_gt_b == 1].tolist()
-
-        return ranks_a, ranks_b
+        return loss_a, loss_b
 
     def cal_rank(self,
-                 hs: torch.Tensor,
+                 h_m: torch.Tensor,
+                 h_a: torch.Tensor,
+                 h_b: torch.Tensor,
                  gt: torch.Tensor,
                  gt_mtc: torch.Tensor,
-                 ) -> tuple[list, list]:
+                 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """ rank via inner-product similarity """
         mask_gt_a = torch.where(gt <= self.n_item_a, 1, 0)
         mask_gt_b = torch.where(gt > self.n_item_a, 1, 0)
+        h = h_a * mask_gt_a + h_b * mask_gt_b + h_m
 
         e_gt, e_mtc = self.ei(gt),  self.ei(gt_mtc)
+        e_all = torch.cat([e_gt, e_mtc], dim=1)
 
-        (h_m, h_a, h_b) = hs
-        h_f = h_a * mask_gt_a + h_b * mask_gt_b + h_m
+        logits = torch.einsum('bd,bnd->bn', h, e_all)
+        ranks = logits[:, 1:].gt(logits[:, 0:1]).sum(dim=1).add(1)
 
-        ranks_f2a, ranks_f2b = self.cal_domain_rank(h_f, e_gt, e_mtc, mask_gt_a.squeeze(-1), mask_gt_b.squeeze(-1))
-
-        return ranks_f2a, ranks_f2b
+        return ranks, mask_gt_a, mask_gt_b
